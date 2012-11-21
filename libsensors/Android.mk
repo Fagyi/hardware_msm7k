@@ -14,7 +14,7 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ifeq ($(TARGET_BOOTLOADER_BOARD_NAME),rhodium)
+ifeq ($(TARGET_BOOTLOADER_BOARD_NAME),blackstone)
 
 # HAL module implemenation, not prelinked, and stored in
 # hw/<SENSORS_HARDWARE_MODULE_ID>.<ro.product.board>.so
