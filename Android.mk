@@ -16,6 +16,7 @@
 
 msm7k_dirs := libcopybit liblights libopencorehw librpc libstagefrighthw boot libgralloc libaudio libcamera libaudio_wince libacoustic libhtcgeneric-ril libsensors libgps
 
-($(TARGET_BOARD_PLATFORM),msm7k)
-include $(call all-named-subdir-makefiles,$(msm7k_dirs))
+ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
+  include $(call all-named-subdir-makefiles,$(msm7k_dirs))
+endif
 
