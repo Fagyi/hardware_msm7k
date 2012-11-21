@@ -20,7 +20,7 @@ ifeq ($(TARGET_BOOTLOADER_BOARD_NAME),rhodium)
 # hw/<SENSORS_HARDWARE_MODULE_ID>.<ro.product.board>.so
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := sensors.rhodium
+LOCAL_MODULE := sensors.blackstone
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 
