@@ -15,7 +15,7 @@
  */
 
 
-#define LOG_NDEBUG 1
+// #define LOG_NDEBUG 0
 #define LOG_TAG "lights"
 
 #include <cutils/log.h>
@@ -40,20 +40,13 @@ static int g_haveTrackballLight = 0;
 static struct light_state_t g_notification;
 static struct light_state_t g_battery;
 static int g_backlight = 255;
-static int g_trackball = 0;
+static int g_trackball = -1;
+static int g_buttons = 0;
 static int g_attention = 0;
 static int g_haveAmberLed = 0;
-static int g_brightnessMode = 0;
-static int g_haveSysFsAutoBacklight = 0;
 
 char const*const TRACKBALL_FILE
         = "/sys/class/leds/jogball-backlight/brightness";
-
-char const*const CAPS_FILE
-        = "/sys/class/leds/caps/brightness";
-
-char const*const FUNC_FILE
-        = "/sys/class/leds/func/brightness";
 
 char const*const RED_LED_FILE
         = "/sys/class/leds/red/brightness";
@@ -79,9 +72,6 @@ char const*const RED_PWM_FILE
 char const*const RED_BLINK_FILE
         = "/sys/class/leds/red/device/blink";
 
-char const*const GREEN_BLINK_FILE
-        = "/sys/class/leds/green/blink";
-
 char const*const AMBER_BLINK_FILE
         = "/sys/class/leds/amber/blink";
 
@@ -90,12 +80,6 @@ char const*const KEYBOARD_FILE
 
 char const*const BUTTON_FILE
         = "/sys/class/leds/button-backlight/brightness";
-
-char const*const AUTOBL_FILE_DBGFS
-        = "/dbgfs/micropklt_dbg/auto_backlight";
-
-char const*const AUTOBL_FILE_SYSFS
-        = "/sys/class/leds/lcd-backlight/auto_backlight";
 
 /**
  * device methods
@@ -112,11 +96,6 @@ void init_globals(void)
     /* figure out if we have the amber LED or not.
        If yes, just support green and amber.         */
     g_haveAmberLed = (access(AMBER_LED_FILE, W_OK) == 0) ? 1 : 0;
-
-    g_haveSysFsAutoBacklight = (access(AUTOBL_FILE_SYSFS, W_OK) == 0) ? 1 : 0;
-
-    LOGD("trackballLight=%d amberLed=%d sysFsAutoBacklight=%d\n",
-        g_haveTrackballLight, g_haveAmberLed, g_haveSysFsAutoBacklight);
 }
 
 static int
@@ -148,7 +127,7 @@ is_lit(struct light_state_t const* state)
 }
 
 static int
-handle_trackball_light_locked(struct light_device_t* dev) //Currently not used
+handle_trackball_light_locked(struct light_device_t* dev)
 {
     int mode = g_attention;
 
@@ -164,7 +143,6 @@ handle_trackball_light_locked(struct light_device_t* dev) //Currently not used
         return 0;
     }
 
-    g_trackball=mode;
     return write_int(TRACKBALL_FILE, mode);
 }
 
@@ -184,19 +162,9 @@ set_light_backlight(struct light_device_t* dev,
     int brightness = rgb_to_brightness(state);
     pthread_mutex_lock(&g_lock);
     g_backlight = brightness;
-
-    if (g_brightnessMode != state->brightnessMode) {
-        g_brightnessMode = state->brightnessMode;
-        LOGD("Switched brightnessMode=%d brightness=%d\n", g_brightnessMode,
-            brightness);
-        err = write_int(g_haveSysFsAutoBacklight
-            ? AUTOBL_FILE_SYSFS : AUTOBL_FILE_DBGFS, g_brightnessMode);
-    }
-    // if we switched to user mode, allow for setting the backlight immedeately
-    if (g_brightnessMode == BRIGHTNESS_MODE_USER){
-        LOGD("Setting brightnessMode=%d brightness=%d\n", g_brightnessMode,
-            brightness);
-        err = write_int(LCD_FILE, brightness);
+    err = write_int(LCD_FILE, brightness);
+    if (g_haveTrackballLight) {
+        handle_trackball_light_locked(dev);
     }
     pthread_mutex_unlock(&g_lock);
     return err;
@@ -207,9 +175,9 @@ set_light_keyboard(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
-    int brightness = rgb_to_brightness(state);
+    int on = is_lit(state);
     pthread_mutex_lock(&g_lock);
-    err = write_int(KEYBOARD_FILE, brightness);
+    err = write_int(KEYBOARD_FILE, on?255:0);
     pthread_mutex_unlock(&g_lock);
     return err;
 }
@@ -219,87 +187,12 @@ set_light_buttons(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     int err = 0;
-    int brightness = rgb_to_brightness(state);
-    pthread_mutex_lock(&g_lock);
-    err = write_int(BUTTON_FILE, brightness);
-    pthread_mutex_unlock(&g_lock);
-    return err;
-}
-
-static int
-set_light_caps(struct light_device_t* dev,
-        struct light_state_t const* state)
-{
-    int err = 0;
     int on = is_lit(state);
-    LOGV("%s: CAPS led activity, setting led: %d", __func__,on);
     pthread_mutex_lock(&g_lock);
-    err = write_int(CAPS_FILE, on?1:0);
+    g_buttons = on;
+    err = write_int(BUTTON_FILE, on?255:0);
     pthread_mutex_unlock(&g_lock);
     return err;
-}
-
-static int
-set_light_func(struct light_device_t* dev,
-        struct light_state_t const* state)
-{
-    int err = 0;
-    int on = is_lit(state);
-    LOGV("%s: FUNC led activity, setting led: %d", __func__,on);
-    pthread_mutex_lock(&g_lock);
-    err = write_int(FUNC_FILE, on?1:0);
-    pthread_mutex_unlock(&g_lock);
-    return err;
-}
-
-static int
-set_trackball_light_locked(struct light_device_t* dev,
-        struct light_state_t const* state)
-{
-    int alpha, red, green, blue;
-    int onMS, offMS;
-    unsigned int colorRGB;
-
-    switch (state->flashMode) {
-        case LIGHT_FLASH_TIMED:
-            onMS = state->flashOnMS;
-            offMS = state->flashOffMS;
-            break;
-        case LIGHT_FLASH_NONE:
-        default:
-            onMS = 0;
-            offMS = 0;
-            break;
-    }
-
-    colorRGB = state->color;
-
-    red = (colorRGB >> 16) & 0xFF;
-    green = (colorRGB >> 8) & 0xFF;
-    blue = colorRGB & 0xFF;
-
-    LOGV("%s: g_trackball=%d colorRGB=%08X, onMS=%d, offMS=%d\n", __func__,
-        g_trackball, colorRGB, onMS, offMS);
-
-    if (red && !(onMS || offMS) && (g_trackball != 2)) {
-        //Solid red -> Charging (BREATHE)
-        g_trackball = 2;
-    } else if (red && (onMS || offMS) && (g_trackball != 3)) {
-        //Blinking red -> Critical battery (VERTICAL)
-        g_trackball = 3;
-    } else if (green && !(onMS || offMS) && (g_trackball != 7)) {
-        //Solid green -> Charged (SOLID)
-        g_trackball = 7;
-    } else if (green && (onMS || offMS)) {
-        //Blinking green -> Taskbar notification (ROTATE)
-        g_trackball = 1;
-    } else {
-        //Off
-        g_trackball = 0;
-    }
-    write_int(TRACKBALL_FILE, g_trackball);
-
-    return 0;
 }
 
 static int
@@ -326,8 +219,10 @@ set_speaker_light_locked(struct light_device_t* dev,
 
     colorRGB = state->color;
 
-    LOGV("set_speaker_light_locked colorRGB=%08X, onMS=%d, offMS=%d\n",
+#if 0
+    LOGD("set_speaker_light_locked colorRGB=%08X, onMS=%d, offMS=%d\n",
             colorRGB, onMS, offMS);
+#endif
 
     red = (colorRGB >> 16) & 0xFF;
     green = (colorRGB >> 8) & 0xFF;
@@ -379,12 +274,8 @@ set_speaker_light_locked(struct light_device_t* dev,
             write_int(RED_PWM_FILE, pwm);
         }
         write_int(RED_BLINK_FILE, blink);
-    }
-    else {
-        if (red)
-            write_int(AMBER_BLINK_FILE, blink);
-        else if (green)
-            write_int(GREEN_BLINK_FILE, blink);
+    } else {
+        write_int(AMBER_BLINK_FILE, blink);
     }
 
     return 0;
@@ -394,23 +285,9 @@ static void
 handle_speaker_battery_locked(struct light_device_t* dev)
 {
     if (is_lit(&g_battery)) {
-        LOGV("%s: handling g_battery", __func__);
         set_speaker_light_locked(dev, &g_battery);
     } else {
-        LOGV("%s: handling g_notification", __func__);
         set_speaker_light_locked(dev, &g_notification);
-    }
-}
-
-static void
-handle_trackball_battery_locked(struct light_device_t* dev)
-{
-    if (is_lit(&g_battery)) {
-        LOGV("%s: handling g_battery", __func__);
-        set_trackball_light_locked(dev, &g_battery);
-    } else {
-        LOGV("%s: handling g_notification", __func__);
-        set_trackball_light_locked(dev, &g_notification);
     }
 }
 
@@ -421,10 +298,9 @@ set_light_battery(struct light_device_t* dev,
     pthread_mutex_lock(&g_lock);
     g_battery = *state;
     if (g_haveTrackballLight) {
-        handle_trackball_battery_locked(dev);
-    } else {
-        handle_speaker_battery_locked(dev);
+        set_speaker_light_locked(dev, state);
     }
+    handle_speaker_battery_locked(dev);
     pthread_mutex_unlock(&g_lock);
     return 0;
 }
@@ -435,13 +311,12 @@ set_light_notifications(struct light_device_t* dev,
 {
     pthread_mutex_lock(&g_lock);
     g_notification = *state;
-    LOGV("%s: g_trackball=%d color=0x%08x", __func__, g_trackball,
-        state->color);
+    LOGV("set_light_notifications g_trackball=%d color=0x%08x",
+            g_trackball, state->color);
     if (g_haveTrackballLight) {
-        handle_trackball_battery_locked(dev);
-    } else {
-        handle_speaker_battery_locked(dev);
+        handle_trackball_light_locked(dev);
     }
+    handle_speaker_battery_locked(dev);
     pthread_mutex_unlock(&g_lock);
     return 0;
 }
@@ -451,17 +326,16 @@ set_light_attention(struct light_device_t* dev,
         struct light_state_t const* state)
 {
     pthread_mutex_lock(&g_lock);
-    LOGV("%s: g_trackball=%d flashOnMS=%d flashMode=%d color=0x%08x", __func__,
-            g_trackball, state->flashOnMS, state->flashMode, state->color);
+    LOGV("set_light_attention g_trackball=%d color=0x%08x",
+            g_trackball, state->color);
     if (state->flashMode == LIGHT_FLASH_HARDWARE) {
         g_attention = state->flashOnMS;
     } else if (state->flashMode == LIGHT_FLASH_NONE) {
         g_attention = 0;
     }
-/*Currently not interpreting attention requests from Android*/
-//    if (g_haveTrackballLight) {
-//        handle_trackball_light_locked(dev);
-//    }
+    if (g_haveTrackballLight) {
+        handle_trackball_light_locked(dev);
+    }
     pthread_mutex_unlock(&g_lock);
     return 0;
 }
@@ -508,12 +382,6 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     }
     else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
         set_light = set_light_attention;
-    }
-    else if (0 == strcmp(LIGHT_ID_CAPS, name)) {
-        set_light = set_light_caps;
-    }
-    else if (0 == strcmp(LIGHT_ID_FN, name)) {
-        set_light = set_light_func;
     }
     else {
         return -EINVAL;

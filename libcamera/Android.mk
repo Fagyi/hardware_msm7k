@@ -1,5 +1,4 @@
-BUILD_LIBCAMERA:= true
-ifeq ($(BUILD_LIBCAMERA),true)
+ifeq ($(TARGET_BOOTLOADER_BOARD_NAME),kovsky)
 
 # When zero we link against libmmcamera; when 1, we dlopen libmmcamera.
 DLOPEN_LIBMMCAMERA:=1
@@ -39,4 +38,4 @@ LOCAL_MODULE_TAGS := optional
 include $(BUILD_SHARED_LIBRARY)
 
 endif # BUILD_TINY_ANDROID
-endif # BUILD_LIBCAMERA
+endif # TARGET_BOOTLOADER_BOARD_NAME
